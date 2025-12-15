@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Boom & Crash Spike Detector</title>
+<style>
+body{background:#020617;color:#e5e7eb;font-family:Arial,Helvetica,sans-serif;padding:16px}
+.card{background:#0f172a;border-radius:14px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+h1{margin:0 0 8px;font-size:22px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+select,button{padding:10px;border-radius:10px;border:1px solid #334155;background:#020617;color:#e5e7eb}
+button{cursor:pointer}
+.signal{font-size:32px;font-weight:700;text-align:center}
+.up{color:#22c55e}
+.down{color:#ef4444}
+.wait{color:#facc15}
+.badge{display:inline-block;padding:6px 10px;border-radius:999px;background:#1f2937;margin-bottom:6px}
+.muted{color:#94a3b8}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>Boom & Crash Spike Detector</h1>
+<div class="muted">Heuristic early-warning detector (NOT guaranteed). Designed to alert ~3–4 candles before typical spikes.</div>
+
+<div class="grid" style="margin-top:12px">
+<div>
+<label>Market</label><br/>
+<select id="symbol">
+<option value="boom600">Boom 600</option>
+<option value="boom300">Boom 300</option>
+<option value="boom500">Boom 500</option>
+<option value="boom1000">Boom 1000</option>
+<option value="crash600">Crash 600</option>
+<option value="crash300">Crash 300</option>
+<option value="crash500">Crash 500</option>
+<option value="crash1000">Crash 1000</option>
+</select>
+</div>
+<div>
+<label>Actions</label><br/>
+<button onclick="start()">Start</button>
+<button onclick="stop()">Stop</button>
+</div>
+</div>
+
+<div class="card" style="margin-top:14px;text-align:center">
+<div class="badge">Spike Signal</div>
+<div id="signal" class="signal wait">WAIT ⏳</div>
+<div id="confidence" class="muted">Collecting candles…</div>
+</div>
+</div>
+
+<script>
+const APP_ID = 1089; // demo/public
+let ws;
+let candles = [];
+
+function start(){
+  stop();
+  candles=[];
+  const symbol = document.getElementById('symbol').value;
+  ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${APP_ID}`);
+  ws.onopen = ()=>{
+    ws.send(JSON.stringify({
+      ticks_history: symbol,
+      adjust_start_time: 1,
+      count: 50,
+      end: 'latest',
+      style: 'candles',
+      granularity: 60
+    }));
+    ws.send(JSON.stringify({ticks: symbol, subscribe: 1}));
+  }
+  ws.onmessage = (msg)=>{
+    const data = JSON.parse(msg.data);
+    if(data.candles){
+      candles = data.candles.map(c=>({open:c.open,close:c.close,high:c.high,low:c.low}));
+    }
+    if(data.tick && candles.length){
+      const last = candles[candles.length-1];
+      last.close = data.tick.quote;
+      analyze();
+    }
+  }
+}
+
+function stop(){ if(ws) ws.close(); }
+
+function analyze(){
+  if(candles.length < 10) return;
+  const recent = candles.slice(-6);
+  let compression = 0;
+  let momentum = 0;
+  for(let i=1;i<recent.length;i++){
+    const body = Math.abs(recent[i].close - recent[i].open);
+    if(body < (recent[i].high - recent[i].low)*0.25) compression++;
+    if(recent[i].close > recent[i-1].close) momentum++;
+  }
+  const market = document.getElementById('symbol').value;
+  const isBoom = market.startsWith('boom');
+
+  if(isBoom && compression>=3 && momentum>=3){
+    showSignal('UP ↑', 'Possible BOOM spike soon (3–4 candles)', 'up');
+  } else if(!isBoom && compression>=3 && momentum<=2){
+    showSignal('DOWN ↓', 'Possible CRASH spike soon (3–4 candles)', 'down');
+  } else {
+    showSignal('WAIT ⏳', 'No strong spike setup', 'wait');
+  }
+}
+
+function showSignal(text, conf, cls){
+  const el = document.getElementById('signal');
+  el.className = 'signal '+cls;
+  el.innerText = text;
+  document.getElementById('confidence').innerText = conf;
+}
+</script>
+</body>
+</html>
